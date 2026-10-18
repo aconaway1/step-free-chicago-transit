@@ -31,7 +31,9 @@ Owner: Aaron (network engineer). Prefers direct, technically precise communicati
 - `public/app.js` — `DOWNTOWN` hand-maintained stations (override generated ones by ID, field by field; plus a
   Roosevelt position override), `STATIONS` = merged list, `METRA` downtown stations, `TRACKS` geometry, map setup, pixel-offset track rendering, alert polling (5 min) with stale indicator, step-free alternatives (`alt`), locate-me control (watchPosition; position stays client-side) with a nearest-accessible-stations card
 - `scripts/deploy.sh` — `npx wrangler deploy --tag <commit>`: Workers Builds' deploy command (WORKERS_CI_COMMIT_SHA),
-  also for manual deploys (git HEAD, `-dirty` with uncommitted changes)
+  also for manual deploys (git HEAD, `-dirty` with uncommitted changes). Settings → Builds: Build command EMPTY,
+  Deploy command `sh scripts/deploy.sh` (set 2026-10-18; first tagged version 2f1d410b = e8abdf2). With the script in
+  the build command instead, the default deploy step redeploys untagged on top (Oct 15–18, `tag: None`).
 - `src/worker.js` — Worker entry; routes `GET`/`HEAD /api/elevators`, 405 for other methods, 404 for anything else
 - `src/runlog.js` — `RunLog` Durable Object: per-request log of Metra fetches (see Metra section)
 - `src/metra.js` — `GET /api/metra-alerts` and `/api/metra-log.csv`; Metra GTFS-realtime alerts (protobuf → JSON) using the `METRA_API_TOKEN` secret
