@@ -193,9 +193,21 @@ platforms (its GTFS point sits on the CTA LaSalle stations). OTC/CUS/LSS have `a
 down each line are useless at a terminal (the Union Station Great Hall notices made that obvious).
 - Status `k`: `y` elevator (ELEVATORS list in the script: 26 incl. Millennium), `a` accessible platform (GTFS
   `wheelchair_boarding` 1; popup says "no elevator, usually a level or ramped platform. Board at the accessible
-  car"), `u` not marked accessible (GTFS 0 = no information; gray square with a question mark, never claimed
-  inaccessible). `fix` = elevator although GTFS says 0 (79th, 87th, 103rd ME, Grand/Cicero); the popup labels that
-  "our correction" per the license. Counts (Oct 3 feed): 26 y, 173 a, 40 u.
+  car"), `n` not accessible (stairs only), `u` not marked accessible (GTFS 0 = no information and no designation;
+  gray square with a question mark; none left, the build warns if one appears). `fix` = our status differs from GTFS
+  (79th, 87th, 103rd ME and Grand/Cicero have elevators; six `a` below); the popup labels that "our correction" per
+  the license. Counts (Oct 3 feed): 26 y, 179 a, 34 n, 0 u.
+- Designations (2026-10-18): the 40 GTFS-0 stations were resolved from Metra's station accessibility designations,
+  A/P/N on the north/west/south "sector access map for customers with disabilities" pages linked from
+  metra.com/accessibility (metra.com 403s non-browser user agents; fetch with a browser UA). Hand lists in
+  build_metra.py like ELEVATORS: NOT_ACCESSIBLE (34: the city ME stops, Gresham, 123rd, Prairie St., Clybourn,
+  Hubbard Woods, Indian Hill, Mayfair, Forest Glen, Gladstone Park, Mannheim, Kedzie, River Forest, Halsted, Western
+  Ave. BNSF, Congress Park), FULLY_ACCESSIBLE (6: Cicero, Cumberland, Hanson Park, Hazel Crest, Highlands, Stone Ave.),
+  PARTIAL (10, all GTFS 1: Beverly branch 91st–119th and 95th-Longwood, Braeside, Riverside, Brookfield, Clarendon
+  Hills, Fairview Ave.; shown as "Partially accessible platform"). No GTFS-1 station is N on Metra's pages.
+  95th St.–Chicago State (ME, N) and Ravinia Park (UP-N, P, event-only) aren't served GTFS stops. Metra's page
+  counts (186 A, 13 P, 44 N) don't match its own lists; the lists were used. Key: "Not marked accessible" replaced by
+  a red Metra "Stairs only" square.
 - `alt` for every station: along every distinct stop pattern (not just the longest: RI_OB_1 mixes Beverly and
   main-line trips), the nearest station with `k` y/a inbound and outbound, per line; at multi-line stations each
   entry names the line(s) ("UP-NW, next stop outbound"). Shown for u/n stations, and for y/a stations with a

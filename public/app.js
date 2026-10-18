@@ -53,9 +53,11 @@ OVERRIDE[41400] = {ll:[41.8674,-87.6268]};
 const STATIONS = CTA_DATA.stations.map(s=>({...s, ...OVERRIDE[s.id]}));
 
 // Metra stations: all of them from scripts/build_metra.py (METRA_DATA, Metra static GTFS), k = 'y' elevator (Metra's
-// published elevator list, metra.com/elevatorsites), 'a' accessible platform (GTFS wheelchair_boarding 1), 'u' not
-// marked accessible (GTFS 0, "no information"); fix = elevator although GTFS doesn't mark the station accessible.
-// The elevator list and our corrections are our reading of Metra's site, not licensed feed data, labeled as such.
+// published elevator list, metra.com/elevatorsites), 'a' accessible platform (GTFS wheelchair_boarding 1, or Metra's
+// "fully accessible" designation), 'n' not accessible (Metra's designations: stairs only), 'u' not marked accessible
+// (GTFS 0, "no information", and no designation; none as of Oct 2026). fix = our status differs from GTFS; partial =
+// Metra designates it partially accessible. The elevator list and designations are our reading of Metra's site, not
+// licensed feed data, labeled as such.
 // METRA below: hand-maintained downtown entries, overriding generated ones by GTFS stop_id, field by field.
 // Millennium is 'n' while its only elevator is closed. LaSalle Street's GTFS point sits on top of the CTA LaSalle
 // stations, so it's moved south onto the platforms. The three terminals with elevators get no alternatives (alt:[]):
@@ -293,20 +295,23 @@ function metraAlertsFor(s){
   const names = metraAliases(s);
   return METRA_ALERTS.filter(a=>a.routes.some(r=>s.lines.includes(r)) && a.headers.some(h=>names.some(n=>words(h).includes(n))));
 }
-const METRA_STATUS = {y:'Elevator access', a:'Accessible platform', u:'Not marked accessible', n:'Not accessible'};
+const METRA_STATUS = {y:'Elevator access', a:'Accessible platform', u:'Not marked accessible', n:'Not accessible: stairs only'};
 const METRA_ICON = {y:'ti-elevator', a:'ti-wheelchair', u:'ti-help', n:'ti-stairs'};
-// Where each status comes from. Elevators: our reading of Metra's site; the rest: Metra's GTFS as published.
+// Where each status comes from. Elevators and designations: our reading of Metra's site; the rest: Metra's GTFS as
+// published.
 const METRA_SOURCE = {
   y: s => s.fix ? "Elevator per Metra's published elevator list. Metra's schedule data doesn't mark this station accessible; that's our correction."
     : "Elevator per Metra's published elevator list.",
-  a: () => "Marked accessible in Metra's schedule data: no elevator, usually a level or ramped platform. Board at the accessible car.",
+  a: s => s.fix ? "Metra's station accessibility designations list this station as fully accessible: no elevator, usually a level or ramped platform. Metra's schedule data doesn't mark it accessible; that's our correction. Board at the accessible car."
+    : s.partial ? "Metra designates this station partially accessible: you can reach the platforms and board, but ramps, ticket windows or shelters may not fully meet ADA guidelines. Board at the accessible car."
+    : "Marked accessible in Metra's schedule data: no elevator, usually a level or ramped platform. Board at the accessible car.",
   u: () => "Metra's schedule data doesn't mark this station accessible.",
-  n: () => '',
+  n: s => s.temp ? '' : "Metra's station accessibility designations list this station as not accessible: stairs only to the platforms.",
 };
 function metraPopup(s){
   const alerts = metraAlertsFor(s);
   const al = alerts.map(a=>`<div class="al">${esc(a.description || a.headers[0])}</div>`).join('');
-  const st = s.k === 'n' && s.temp ? 'Temporarily not accessible' : METRA_STATUS[s.k];
+  const st = s.k === 'n' && s.temp ? 'Temporarily not accessible' : s.partial ? 'Partially accessible platform' : METRA_STATUS[s.k];
   const show = (s.k === 'u' || s.k === 'n' || alerts.length) && s.alt && s.alt.length;
   // Flag alternatives that have an accessibility alert in Metra's feed themselves.
   const alt = show ? altList('Nearest accessible Metra stations', s.alt.map(([n,d])=>{

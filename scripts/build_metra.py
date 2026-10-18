@@ -5,10 +5,14 @@ Source: Metra static GTFS (public, no key; check published.txt). Its headers hav
   - Stations: stops.txt, with the lines that serve them from trips/stop_times.
   - Accessibility (k): 'y' = elevator, from Metra's published elevator list (ELEVATORS below, our reading of
     metra.com/elevatorsites, not feed data); 'a' = accessible platform (wheelchair_boarding 1: level or ramped,
-    boarding by the accessible car's bridge plate); 'u' = not marked accessible (wheelchair_boarding 0, which
-    GTFS defines as "no information"; Metra's city ME stations with stairs only are in this group).
-    GTFS says 0 at four elevator stations (79th, 87th, 103rd on the ME, Grand/Cicero): the elevator list wins,
-    and app.js labels that as our correction.
+    boarding by the accessible car's bridge plate); 'n' = not accessible (NOT_ACCESSIBLE below); 'u' = not marked
+    accessible (wheelchair_boarding 0, which GTFS defines as "no information", and not in Metra's designations;
+    none as of Oct 2026, the build warns about any).
+    Metra's station designations (A/P/N on its sector access maps, linked from metra.com/accessibility) fill in the
+    stations GTFS leaves at 0: NOT_ACCESSIBLE ('n'), FULLY_ACCESSIBLE ('a' with fix), and PARTIAL (marked partial,
+    still 'a': Metra says wheelchair users can reach the platforms and board there).
+    GTFS says 0 at four elevator stations (79th, 87th, 103rd on the ME, Grand/Cicero): the elevator list wins.
+    Every station where our status differs from GTFS gets fix; app.js labels that as our correction.
   - Tracks: outbound shapes. A line's branches share its trunk, so each branch keeps only what an earlier shape
     of the same line doesn't already cover. Where lines share a corridor they're drawn side by side: d (pixel
     offset, one per point) from the lines within SHARE of each point, in ORDER.
@@ -37,6 +41,20 @@ OUT = os.path.join(ROOT, 'public', 'metra-data.js')
 ELEVATORS = {'MILLENNIUM', 'VANBUREN', 'MUSEUM', 'MCCORMICK', '51ST-53RD', '55-56-57TH', '79TH-UP', '87TH-UP',
              '103RD-UP', 'KENSINGTN', 'IVANHOE', '147TH-UP', 'HARVEY', 'CALUMET', 'HOMEWOOD', 'FLOSSMOOR',
              'OTC', 'MAINST', 'WINNETKA', 'KENOSHA', 'CUS', 'GRAND-CIC', 'LSS', 'JOLIET', 'LISLE', 'ROSEMONT'}
+# Metra's station accessibility designations (metra.com north/west/south sector access maps for customers with
+# disabilities, read 2026-10-18; GTFS stop IDs). Only stations GTFS doesn't already mark accessible, plus PARTIAL.
+# "N: Not Accessible ... usually elevated and only have stairs to reach the platforms."
+NOT_ACCESSIBLE = {'18TH-UP', '27TH-UP', '47TH-UP', '59TH-UP', '63RD-UP', '75TH-UP', '83RD-UP', '91ST-UP', '107TH-UP',
+                  '111TH-UP', 'ASHLAND', 'BURROAK', 'MATTESON', 'OLYMPIA', 'RACINE', 'RIVERDALE', 'STATEST',
+                  'STEWARTRID', 'WPULLMAN', 'GRESHAM', '123RD-BEV', 'PRAIRIEST', 'CLYBOURN', 'HUBARDWOOD',
+                  'INDIANHILL', 'MAYFAIR', 'FORESTGLEN', 'GLADSTONEP', 'MANNHEIM', 'KEDZIE', 'RIVRFOREST', 'HALSTED',
+                  'BNWESTERN', 'CONGRESSPK'}
+# "A: Fully Accessible", though GTFS says 0 (no information).
+FULLY_ACCESSIBLE = {'CICERO', 'CUMBERLAND', 'HANSONPK', 'HAZELCREST', 'HIGHLANDS', 'STONEAVE'}
+# "P: Partially Accessible": platforms reachable from the street; ramps, ticket windows, buildings and shelters may
+# not fully conform to ADA guidelines. GTFS marks all of these 1.
+PARTIAL = {'91ST-BEV', 'LONGWOOD', '107TH-BEV', '115TH-BEV', '119TH-BEV', 'BRAESIDE', 'RIVERSIDE', 'BROOKFIELD',
+           'CLARNDNHIL', 'FAIRVIEWDG'}
 # Side-by-side order across a shared corridor, left to right facing outbound.
 ORDER = ['UP-N', 'UP-NW', 'UP-W', 'MD-N', 'NCS', 'MD-W', 'BNSF', 'HC', 'SWS', 'RI', 'ME']
 SHARE = 0.04       # miles (~65 m): lines this close share a corridor
@@ -157,7 +175,8 @@ def main():
         patterns.add((t['route_id'], tuple(st)))
         shape_route[t['shape_id']] = t['route_id']
 
-    k = {sid: 'y' if sid in ELEVATORS else 'a' if s['wheelchair_boarding'] == '1' else 'u' for sid, s in stops.items()}
+    k = {sid: 'y' if sid in ELEVATORS else 'n' if sid in NOT_ACCESSIBLE else
+         'a' if s['wheelchair_boarding'] == '1' or sid in FULLY_ACCESSIBLE else 'u' for sid, s in stops.items()}
     # Display names: GTFS names without trailing periods ("Lake Forest."), plus the line where that repeats.
     base = {sid: s['stop_name'].rstrip('.').strip() for sid, s in stops.items()}
     count = {}
@@ -178,7 +197,7 @@ def main():
         for i, m in enumerate(st):
             for step, way in ((-1, 'inbound'), (1, 'outbound')):
                 j = i + step
-                while 0 <= j < len(st) and k[st[j]] == 'u':
+                while 0 <= j < len(st) and k[st[j]] in ('u', 'n'):
                     j += step
                 if 0 <= j < len(st):
                     key, cand = (m, route, way), (miles(ll[m], ll[st[j]]), abs(j - i), st[j])
@@ -198,8 +217,12 @@ def main():
             continue
         st = {'id': sid, 'name': names[sid], 'll': [round(ll[sid][0], 5), round(ll[sid][1], 5)],
               'k': k[sid], 'lines': order(lines_at[sid])}
-        if k[sid] == 'y' and s['wheelchair_boarding'] != '1':
-            st['fix'] = True   # elevator per Metra's list though GTFS doesn't mark the station accessible
+        if k[sid] in ('y', 'a') and s['wheelchair_boarding'] != '1':
+            st['fix'] = True   # accessible per Metra's elevator list or designations though GTFS says 0
+        if sid in PARTIAL:
+            st['partial'] = True
+        if k[sid] == 'n' and s['wheelchair_boarding'] == '1':
+            st['fix'] = True   # Metra's designations say not accessible though GTFS marks it accessible
         if sid in alts:
             rows = []
             for n, info in alts[sid].items():
@@ -256,8 +279,16 @@ def main():
     with open(OUT, 'w') as f:
         f.write('// Generated by scripts/build_metra.py from Metra static GTFS and metra.com/elevatorsites. Do not edit.\n')
         f.write('const METRA_DATA = ' + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + ';\n')
+    for s in stations:
+        if s['k'] == 'u':
+            print(f"note: {s['id']} {s['name']}: GTFS has no accessibility information and it's not in Metra's "
+                  "designations; check metra.com and add it to NOT_ACCESSIBLE or FULLY_ACCESSIBLE", file=sys.stderr)
+    for sid in ELEVATORS | NOT_ACCESSIBLE | FULLY_ACCESSIBLE | PARTIAL:
+        if sid not in {s['id'] for s in stations}:
+            print(f"note: {sid} is in a hand list but not a served GTFS stop", file=sys.stderr)
     print(f"wrote {OUT}: {len(stations)} stations ({sum(s['k'] == 'y' for s in stations)} elevator, "
-          f"{sum(s['k'] == 'a' for s in stations)} accessible, {sum(s['k'] == 'u' for s in stations)} not marked), "
+          f"{sum(s['k'] == 'a' for s in stations)} accessible, {sum(s['k'] == 'n' for s in stations)} not accessible, "
+          f"{sum(s['k'] == 'u' for s in stations)} not marked), "
            f"{len(lines)} track pieces, {sum(len(l['p']) for l in lines)} points, {len(labels)} line labels, {os.path.getsize(OUT)//1024} KiB; "
           f"GTFS published {published}", file=sys.stderr)
 
