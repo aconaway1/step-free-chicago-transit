@@ -37,7 +37,7 @@ Owner: Aaron (network engineer). Prefers direct, technically precise communicati
 - `src/metra.js` — `GET /api/metra-alerts` and `/api/metra-log.csv`; Metra GTFS-realtime alerts (protobuf → JSON) using the `METRA_API_TOKEN` secret
 - `src/elevators.js` — `GET /api/elevators`; proxies CTA Customer Alerts API
   (`accessibility=TRUE&activeonly=TRUE`, JSON, plus any alert in the full active feed whose headline/short names an
-  escalator), normalizes to `{updated, version:{id,tag,at}, alerts:[{id,headline,short,stations:[{id,name}]}]}`, 120s cache.
+  escalator), normalizes to `{updated, version:{id,tag,at}, alerts:[{id,headline,short,stations:[{id,name}],routes:[CTA route IDs]}]}`, 120s cache.
   `version` (CF_VERSION) drives the panel footer's "Version xxxxxxxx (commit 1a2b3c4), <date>" (first 8 of the
   version ID, as on /status; commit = version tag from scripts/deploy.sh, linked to GitHub); a later poll from another
   deploy adds "New version available, reload".
@@ -303,8 +303,19 @@ rule as `alt`). CTA bus stops within 0.2 mi straight line of the station point (
 stops are ~2 blocks apart); ride each bus trip pattern (shapes with ≥10 trips) to the first stop within 0.2 mi of a
 station with elevators at least 0.3 mi away (closer = walk), up to 3 mi. One row per route, directions nearest
 first: `['#53 Pulaski', 'north to Pulaski (Green), 0.8 mi; south to Pulaski (Pink), 1.5 mi']`, up to four routes.
-Hand downtown entries use the same format. All CTA bus stops are `wheelchair_boarding=1`. Not alert-aware: a bus may
-point at a station whose elevator is out (same as `alt`).
+Hand downtown entries use the same format. All CTA bus stops are `wheelchair_boarding=1`.
+
+Outage-aware alternatives (2026-10-18): popups flag (amber, ⚠) any `alt` station or bus target with a current alert
+("elevator alert", "elevator alert (one platform)", or "accessibility alert" for non-elevator ones like the Loop
+elevated suspension); entries stay listed, since a one-platform outage may not matter. Flagged entries don't count
+toward the "closer than every listed option" cutoff for other-line additions, so replacements appear (Merchandise
+Mart gets Grand/Lake (Red) when Clark/Lake and Chicago are flagged); flagged stations are never added. Bus targets
+are found by station name in the detail text (`namedIn`). Line-aware: a NON-elevator alert counts only if its
+`routes` include a line the rider would use there (`linesVia`: shared lines, else the target's), so the Loop
+suspension doesn't flag Clark/Lake for the Blue subway; elevator alerts always count, because their route lists can
+be incomplete (Washington/Wabash's omitted Brown, Oct 18). The nearby card uses the same per-line rule (`isOut`).
+Metra alternatives are flagged when the target has a matched alert in Metra's feed. Popups render when opened, so
+an open popup doesn't update on the next poll.
 Pace (2026-10-15): same rule with Pace GTFS (pacebus.com/gtfsdownload, cached as `.cache/pace_gtfs.zip`; every trip
 `wheelchair_accessible=1`), labeled "Suburban bus 213 Green Bay Road". Routes named "...Express" (peak commuter expresses
 like 755/850) are left out: they displaced all-day CTA routes at Polk and Cermak-Chinatown. Adds buses at Main,
@@ -322,5 +333,4 @@ GraphQL `workersInvocationsScheduled` (scriptName shows `__unknown__` even when 
 
 ## Ideas not yet done
 
-- Flag or skip bus/alt targets whose elevator is out (outage-aware alternatives).
 - Metra stations as bus targets (Pace/CTA to an accessible Metra station).

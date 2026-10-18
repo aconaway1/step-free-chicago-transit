@@ -195,19 +195,61 @@ function walkMiles(a,b){
   return Math.min(dy+dx, Math.hypot(dy,dx)*1.25);
 }
 const miOf = d => parseFloat(d);  // every alt detail starts with its distance ("0.8 mi · ...")
-// Alternatives plus up to two stations with elevators on other lines that are closer than every listed option
-// and within walking/rolling range (1.5 mi), e.g. Pulaski (Green) for Pulaski (Blue). Sorted by distance.
+// Outage-aware alternatives: alt and bus entries are generated ahead of time, so the station they point to may have
+// an elevator alert now. Such entries stay listed (a one-platform outage may not matter for the trip) but are
+// flagged, and they don't count when deciding whether other-line stations are worth adding.
+const normName = n => n.replace(/’/g, "'");   // hand entries spell O’Hare with a curly apostrophe
+const BY_NAME = new Map(STATIONS.map(s=>[normName(s.name), s]));
+// An alert counts for a rider using `lines` at a station unless it's a non-elevator alert (a service suspension) whose
+// routes are all other lines: the Loop elevated suspension lists Clark/Lake but not its Blue Line subway. Elevator
+// alerts always count, since their route lists can be incomplete (Washington/Wabash's omits Brown).
+const ROUTE_LINE = {Red:'red', Blue:'blue', Brn:'brown', G:'green', Org:'orange', P:'purple', Pexp:'purple', Pink:'pink', Y:'yellow'};
+const alertsOn = (o, lines) => stepFreeAlerts(o).filter(a=>
+  /elevator/i.test(`${a.headline} ${a.short}`) || !(a.routes||[]).length || a.routes.some(r=>lines.includes(ROUTE_LINE[r])));
+// Lines a rider would use at alternative o, coming from station s: shared lines, or all of o's if none are shared.
+const linesVia = (s, o) => { const shared = o.lines.filter(l=>s.lines.includes(l)); return shared.length ? shared : o.lines; };
+const isOut = (o, lines) => !!o && o.k==='y' && alertsOn(o, lines || o.lines).length > 0;
+// Same wording rule as the popup status: "elevator" only when an alert names one (the feed also carries things like
+// service suspensions).
+function outNote(o, lines){
+  const texts = alertsOn(o, lines || o.lines).map(a=>`${a.headline} ${a.short}`);
+  if(!texts.some(t=>/elevator/i.test(t))) return 'accessibility alert';
+  return texts.every(t=>ONE_PLATFORM.test(t)) ? 'elevator alert (one platform)' : 'elevator alert';
+}
+// Stations a bus detail names ("north to Pulaski (Green), 0.8 mi; south to Pulaski (Pink), 1.5 mi"): a station name
+// ending at a comma, semicolon or the end, not inside a longer name.
+function namedIn(text){
+  const t = normName(text);
+  return STATIONS.filter(o=>{
+    const n = normName(o.name), i = t.indexOf(n);
+    return i >= 0 && !/[A-Za-z/]/.test(t[i-1] || ' ') && /^([,;]|$)/.test(t.slice(i + n.length, i + n.length + 1));
+  });
+}
+// Alternatives plus up to two stations with elevators on other lines that are closer than every usable listed option
+// and within walking/rolling range (1.5 mi), e.g. Pulaski (Green) for Pulaski (Blue); stations with an alert aren't
+// added. Sorted by distance. Rows are [name, detail, flag], flag = outage note or ''.
 function alternatives(s){
-  const alt = s.alt || [];
-  const best = Math.min(...alt.map(([,d])=>miOf(d)).filter(x=>!isNaN(x)));
-  if(!isFinite(best)) return alt;
-  const listed = new Set(alt.map(([n])=>n));
+  const alt = (s.alt || []).map(([n,d])=>{
+    const o = BY_NAME.get(normName(n)), ls = o && linesVia(s, o);
+    return [n, d, isOut(o, ls) ? outNote(o, ls) : ''];
+  });
+  if(!alt.length) return alt;
+  const best = Math.min(...alt.filter(r=>!r[2]).map(([,d])=>miOf(d)).filter(x=>!isNaN(x)));
+  const listed = new Set(alt.map(([n])=>normName(n)));
   const other = STATIONS
-    .filter(o=>o!==s && o.k==='y' && !listed.has(o.name) && !o.lines.some(l=>s.lines.includes(l)))
+    .filter(o=>o!==s && o.k==='y' && !isOut(o) && !listed.has(normName(o.name)) && !o.lines.some(l=>s.lines.includes(l)))
     .map(o=>[walkMiles(s.ll,o.ll), o]).filter(([d])=>d < best && d <= 1.5).sort((x,y)=>x[0]-y[0]).slice(0,2)
-    .map(([d,o])=>[o.name, `${d.toFixed(1)} mi · ${o.lines.map(l=>LINE_NAME[l]).join(', ')}`]);
+    .map(([d,o])=>[o.name, `${d.toFixed(1)} mi · ${o.lines.map(l=>LINE_NAME[l]).join(', ')}`, '']);
   return [...alt, ...other].sort((x,y)=>(miOf(x[1])||0)-(miOf(y[1])||0));
 }
+// Bus rows with a flag naming any target station that has an elevator alert.
+const busRows = bus => (bus || []).map(([r,d])=>{
+  const out = namedIn(d).filter(isOut);
+  return [r, d, out.length ? out.map(o=>`${outNote(o)} at ${o.name}`).join('; ') : ''];
+});
+// One alternatives list (popups): name, detail, and an amber outage flag.
+const altList = (title, rows) => rows && rows.length ? `<div class="sec">${title}</div><ul>${rows.map(([n,d,f])=>
+  `<li><b>${esc(n)}</b> <span class="d">${esc(d)}</span>${f ? ` <span class="flag"><i class="ti ti-alert-triangle"></i> ${esc(f)}</span>` : ''}</li>`).join('')}</ul>` : '';
 
 function popupFor(s){
   const chips = s.lines.map(l=>`<span class="chip${LIGHT_CHIP.has(l)?' lt':''}" style="--c:${COLOR[l]}">${LINE_NAME[l]}</span>`).join('');
@@ -219,12 +261,11 @@ function popupFor(s){
   const al = alerts.map(a=>`<div class="al">${esc(a.short || a.headline)}</div>`).join('');
   // Just the fact: "use the other platform" isn't an option for one-way Loop lines.
   const tip = oneSide ? `<div class="tip">Only one platform is affected.</div>` : '';
-  const list = (title, rows) => rows && rows.length ? `<div class="sec">${title}</div><ul>${rows.map(([n,d])=>`<li><b>${esc(n)}</b> <span class="d">${esc(d)}</span></li>`).join('')}</ul>` : '';
   const show = s.k==='n' || out;
   return `<div class="pop"><h3>${esc(s.name)}</h3><div class="chips">${chips}</div>
     <div class="st ${st}">${STATUS[st]}</div>${al}${tip}
     ${s.note?`<div class="note-p">${esc(s.note)}</div>`:''}
-    ${show ? list('Nearest stations with elevators', alternatives(s)) + list('Accessible buses', s.bus) : ''}</div>`;
+    ${show ? altList('Nearest stations with elevators', alternatives(s)) + altList('Accessible buses', busRows(s.bus)) : ''}</div>`;
 }
 function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -267,8 +308,11 @@ function metraPopup(s){
   const al = alerts.map(a=>`<div class="al">${esc(a.description || a.headers[0])}</div>`).join('');
   const st = s.k === 'n' && s.temp ? 'Temporarily not accessible' : METRA_STATUS[s.k];
   const show = (s.k === 'u' || s.k === 'n' || alerts.length) && s.alt && s.alt.length;
-  const alt = show ? `<div class="sec">Nearest accessible Metra stations</div><ul>${
-    s.alt.map(([n,d])=>`<li><b>${esc(n)}</b> <span class="d">${esc(d)}</span></li>`).join('')}</ul>` : '';
+  // Flag alternatives that have an accessibility alert in Metra's feed themselves.
+  const alt = show ? altList('Nearest accessible Metra stations', s.alt.map(([n,d])=>{
+    const o = METRA_STATIONS.find(m=>m.name===n);
+    return [n, d, o && metraAlertsFor(o).length ? "alert in Metra's feed" : ''];
+  })) : '';
   return `<div class="pop"><h3>${esc(s.name)}</h3><div class="chips">${metraChips(s.lines)}</div>
     <div class="st ${s.k}">${st}</div>${s.note ? `<div class="note-p">${esc(s.note)}</div>` : ''}
     ${alerts.length ? `${al}<div class="tip">Alert from Metra's feed, updated ${fmtTime(metraUpdated)}.</div>` : ''}
@@ -434,7 +478,8 @@ function setLocating(on){
   renderNearby();
 }
 
-// Closest station with an elevator on each line to the user's position, skipping any with an active alert.
+// Closest station with an elevator on each line to the user's position, skipping any with an active alert for that
+// line (isOut: elevator alerts always, other alerts only when they name the line).
 // A station that's closest for several lines (Clark/Lake downtown) gets one row tagged with those lines.
 // Metra gets its own list: the closest step-free station (elevator or accessible platform) on each Metra line within
 // METRA_NEAR miles, skipping stations with an accessibility alert in Metra's feed (Metra lines reach 60 miles out,
@@ -445,10 +490,10 @@ const METRA_NEAR = 3;
 const nearbyEl = document.getElementById('nearby');
 let lastFix = null, nearbyKey = '', nearbyCollapsed = false;
 function closestByLine(here, stations, lines, out, max = Infinity){
-  const cands = stations.map(s=>({s, d:walkMiles(here, s.ll), out:out(s)})).filter(x=>x.d <= max);
+  const cands = stations.map(s=>({s, d:walkMiles(here, s.ll)})).filter(x=>x.d <= max);
   const rows = new Map(), skipped = new Set();
   for(const line of lines){
-    const onLine = cands.filter(x=>x.s.lines.includes(line)).sort((x,y)=>x.d-y.d);
+    const onLine = cands.filter(x=>x.s.lines.includes(line)).map(x=>({...x, out:out(x.s, line)})).sort((x,y)=>x.d-y.d);
     const pick = onLine.find(x=>!x.out);
     if(!pick) continue;
     onLine.filter(x=>x.out && x.d < pick.d).forEach(x=>skipped.add(x.s.name));
@@ -460,7 +505,7 @@ function closestByLine(here, stations, lines, out, max = Infinity){
 function renderNearby(){
   if(!locating || !lastFix){ nearbyEl.hidden = true; nearbyKey = ''; return; }
   const here = [lastFix.latlng.lat, lastFix.latlng.lng];
-  const cta = closestByLine(here, STATIONS.filter(s=>s.k==='y'), Object.keys(LINE_NAME), s=>stepFreeAlerts(s).length > 0);
+  const cta = closestByLine(here, STATIONS.filter(s=>s.k==='y'), Object.keys(LINE_NAME), (s, line)=>isOut(s, [line]));
   const metra = closestByLine(here, METRA_STATIONS.filter(s=>s.k==='y' || s.k==='a'), Object.keys(METRA_DATA.routes),
     s=>metraAlertsFor(s).length > 0, METRA_NEAR);
   const rough = lastFix.accuracy > 500;
@@ -478,7 +523,7 @@ function renderNearby(){
   nearbyEl.innerHTML = `<div class="head"><div class="sec">Closest station with an elevator, by line</div>
       <button type="button" class="tog" aria-expanded="${!nearbyCollapsed}" aria-label="${nearbyCollapsed?'Expand':'Collapse'} nearest stations"><i class="ti ti-chevron-down"></i></button></div>
     <div class="body"><ul>${cta.shown.map(x=>row(x, 'id', chips)).join('')}</ul>`
-    + skip(cta.skipped, 'elevator alert')
+    + skip(cta.skipped, 'alert on that line')
     + (metra.shown.length || metra.skipped.size ? `<div class="sec sub">Metra, closest step-free station by line (within ${METRA_NEAR} mi)</div>
       <ul>${metra.shown.map(x=>row(x, 'metra', metraChips, x.s.k==='y' ? ' · elevator' : ' · accessible platform')).join('')}</ul>`
       + skip(metra.skipped, "alert in Metra's feed") : '')

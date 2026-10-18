@@ -47,6 +47,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.
 .pop ul{margin:0;padding:0;list-style:none}
 .pop li{padding:1px 0}
 .pop li .d{color:var(--muted)}
+.pop li .flag{color:var(--warn-text);font-weight:600}
 .leaflet-bar a.locate{display:flex;align-items:center;justify-content:center;font-size:18px;color:#333}
 .leaflet-bar a.locate.on{color:#1a73e8}
 .me-dot{fill:#1a73e8;fill-opacity:1;stroke:#fff;stroke-width:3}

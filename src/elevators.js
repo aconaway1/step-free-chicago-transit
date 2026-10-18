@@ -26,6 +26,8 @@ export async function elevators(env) {
       stations: arr(a?.ImpactedService?.Service)
         .filter(s => s.ServiceType === 'T')
         .map(s => ({ id: s.ServiceId, name: s.ServiceName })),
+      // Rail routes the alert names (CTA route IDs: Red, Blue, Brn, G, Org, P, Pexp, Pink, Y).
+      routes: arr(a?.ImpactedService?.Service).filter(s => s.ServiceType === 'R').map(s => s.ServiceId),
     }));
     // The deployed version (Worker and static files deploy together), for the page's version note. tag = the commit
     // it was built from, set by scripts/deploy.sh.
