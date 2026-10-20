@@ -125,7 +125,12 @@ async function load(){
   ]);
 }
 load();
-setInterval(load, 60 * 1000);
+// Every minute, only while the tab is visible: each load reads the Metra request log, and a background tab polling
+// all day helped use up the Durable Objects free tier (Oct 19).
+let lastLoad = Date.now();
+const poll = () => { if (!document.hidden) { lastLoad = Date.now(); load(); } };
+setInterval(poll, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastLoad > 60 * 1000) poll(); });
 </script>
 </body>
 </html>

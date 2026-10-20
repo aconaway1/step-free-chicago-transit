@@ -259,6 +259,10 @@ Researched for the accessibility follow-up:
 - `/status` (public/status.html + `GET /api/status`, src/status.js): live CTA feed check, Metra saved copy age and
   counts, the Metra request log, deployed version (`[version_metadata]` binding CF_VERSION), station data counts.
   Public by the owner's choice; shows only whether keys are set.
+  Oct 19: the free plan's 5M Durable Objects rows_read/day ran out (18:40 UTC Oct 19 to ~00:45 UTC Oct 20 every DO call failed, writes included, so the log has a gap; the map was
+  unaffected: alerts come from KV, record() and report() failures are caught). Cause: report() ran 7 full-scan GROUP BY
+  queries (~2,100 rows each) per /api/status call, and /status reloads every minute. Now one scan aggregated in JS,
+  cached in the object until the next write (≤10 min), and /status polls only while its tab is visible.
 - Metra request log (Oct 13): every individual request to Metra (scheduled and page-visit) is a row in a
   SQLite-backed Durable Object (`RunLog`, src/runlog.js, binding `RUN_LOG`, migration in wrangler.toml; free plan),
   kept 8 days: time, source, run, try number, HTTP status, ms, Cloudflare colo (visits: `request.cf.colo`; cron:

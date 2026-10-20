@@ -6,6 +6,7 @@ import { DurableObject } from 'cloudflare:workers';
 
 const KEEP_MS = 8 * 24 * 3600 * 1000;
 const RECENT = 40;
+const REPORT_TTL_MS = 10 * 60 * 1000;   // a write clears it sooner
 const COLS = ['at', 'source', 'run', 'attempt', 'status', 'ok', 'ms', 'colo', 'server', 'gateway', 'ratelimit', 'error', 'approx'];
 
 export class RunLog extends DurableObject {
@@ -50,24 +51,45 @@ export class RunLog extends DurableObject {
     await this.importLegacy();
     for (const t of tries) this.insert(t);
     this.sql.exec('DELETE FROM tries WHERE at < ?', new Date(Date.now() - KEEP_MS).toISOString());
+    this.cached = null;
   }
 
+  // One table scan, aggregated here, and kept until the next write. The first version ran seven GROUP BY queries,
+  // each a full scan, on every /api/status call; with /status open (it reloads every minute) that used up the free
+  // plan's 5 million rows_read a day (Oct 19), and every Durable Object read failed until 00:00 UTC.
   async report() {
     await this.importLegacy();
-    const q = (s, ...a) => this.sql.exec(s, ...a).toArray();
-    const AGG = `COUNT(*) AS tries, SUM(ok) AS ok, SUM(status = 403) AS blocked, SUM(gateway) AS gateway,
-      COUNT(DISTINCT run) AS runs`;
-    return {
-      since: q('SELECT MIN(at) AS v FROM tries')[0]?.v || null,
-      exactSince: q('SELECT MIN(at) AS v FROM tries WHERE approx = 0')[0]?.v || null,
-      totals: q(`SELECT source, ${AGG} FROM tries GROUP BY source`),
-      statuses: q('SELECT source, status, COUNT(*) AS n FROM tries GROUP BY source, status ORDER BY source, n DESC'),
-      colos: q(`SELECT source, colo, ${AGG}, MIN(at) AS first, MAX(at) AS last FROM tries WHERE approx = 0
-        GROUP BY source, colo ORDER BY source, tries DESC`),
-      hourly: q(`SELECT substr(at, 1, 13) || ':00:00Z' AS hour, source, ${AGG}, MAX(approx) AS approx FROM tries
-        GROUP BY hour, source ORDER BY hour DESC`),
-      recent: q(`SELECT ${COLS.join(',')} FROM tries ORDER BY at DESC, id DESC LIMIT ?`, RECENT),
+    if (this.cached && Date.now() - this.cached.at < REPORT_TTL_MS) return this.cached.report;
+    const rows = this.sql.exec(`SELECT id, ${COLS.join(',')} FROM tries`).toArray()
+      .sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : a.id - b.id);
+    const group = (list, key, extra) => {
+      const m = new Map();
+      for (const r of list) {
+        const k = key(r);
+        let g = m.get(k);
+        if (!g) m.set(k, g = { ...extra(r), tries: 0, ok: 0, blocked: 0, gateway: 0, runs: new Set() });
+        g.tries++; g.ok += r.ok; g.blocked += r.status === 403; g.gateway += r.gateway; g.runs.add(r.run);
+        g.first ??= r.at; g.last = r.at; g.approx = Math.max(g.approx ?? 0, r.approx);
+      }
+      return [...m.values()].map(g => ({ ...g, runs: g.runs.size }));
     };
+    const exact = rows.filter(r => !r.approx);
+    const statuses = new Map();
+    for (const r of rows) { const k = `${r.source} ${r.status}`; statuses.set(k, statuses.get(k) || { source: r.source, status: r.status, n: 0 }).get(k).n++; }
+    const bySourceThen = k => (a, b) => a.source < b.source ? -1 : a.source > b.source ? 1 : b[k] - a[k];
+    const report = {
+      since: rows[0]?.at || null,
+      exactSince: exact[0]?.at || null,
+      totals: group(rows, r => r.source, r => ({ source: r.source })).map(({ first, last, approx, ...t }) => t),
+      statuses: [...statuses.values()].sort(bySourceThen('n')),
+      colos: group(exact, r => `${r.source} ${r.colo}`, r => ({ source: r.source, colo: r.colo }))
+        .map(({ approx, ...c }) => c).sort(bySourceThen('tries')),
+      hourly: group(rows, r => `${r.at.slice(0, 13)} ${r.source}`, r => ({ hour: `${r.at.slice(0, 13)}:00:00Z`, source: r.source }))
+        .map(({ first, last, ...h }) => h).sort((a, b) => a.hour < b.hour ? 1 : a.hour > b.hour ? -1 : 0),
+      recent: rows.slice(-RECENT).reverse().map(({ id, ...r }) => r),
+    };
+    this.cached = { at: Date.now(), report };
+    return report;
   }
 
   async csv() {
